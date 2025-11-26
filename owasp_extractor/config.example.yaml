@@ -1,0 +1,104 @@
+# OWASP 安全规则提取器配置文件
+# 将此文件重命名为 config.yaml 并根据需要修改
+
+# LLM 服务商配置
+llm:
+  # 服务商: openai | azure | anthropic | deepseek | ollama | custom
+  provider: openai
+  
+  # 模型名称（留空则使用默认）
+  # OpenAI: gpt-4o-mini, gpt-4o, gpt-4-turbo
+  # Anthropic: claude-3-5-sonnet-20241022, claude-3-opus-20240229
+  # DeepSeek: deepseek-chat, deepseek-coder
+  # Ollama: llama3.2, codellama, mistral
+  model: gpt-4o-mini
+  
+  # API密钥（建议使用环境变量，不要在此处明文填写）
+  # api_key: your-api-key
+  
+  # 自定义API地址（可选）
+  # base_url: https://api.openai.com/v1
+  
+  # 生成温度（0.0-1.0，越低越确定）
+  temperature: 0.1
+  
+  # 最大输出token数
+  max_tokens: 4096
+
+# 分片配置
+chunking:
+  # 最小分片长度（字符）
+  min_length: 100
+  
+  # 最大分片长度（字符）
+  max_length: 8000
+  
+  # 目标分割层级（2 = ##）
+  target_level: 2
+  
+  # 是否要求必须包含代码块
+  require_code: false
+
+# 运行配置
+runtime:
+  # 最大并发请求数
+  max_concurrent: 3
+  
+  # 失败重试次数
+  retry_count: 3
+  
+  # 重试延迟（秒）
+  retry_delay: 1.0
+
+# 输出配置
+output:
+  # 输出目录
+  dir: ./output
+  
+  # 输出格式: json | jsonl
+  format: jsonl
+  
+  # 输出文件名
+  filename: owasp_security_rules
+
+
+# 不同服务商的配置示例
+# ========================================
+
+# OpenAI 配置示例
+# llm:
+#   provider: openai
+#   model: gpt-4o-mini
+#   # 环境变量: OPENAI_API_KEY
+
+# Azure OpenAI 配置示例
+# llm:
+#   provider: azure
+#   model: gpt-4o-mini
+#   base_url: https://your-resource.openai.azure.com/
+#   # 环境变量: AZURE_OPENAI_API_KEY
+
+# Anthropic Claude 配置示例
+# llm:
+#   provider: anthropic
+#   model: claude-3-5-sonnet-20241022
+#   # 环境变量: ANTHROPIC_API_KEY
+
+# DeepSeek 配置示例
+# llm:
+#   provider: deepseek
+#   model: deepseek-chat
+#   # 环境变量: DEEPSEEK_API_KEY
+
+# Ollama 本地模型配置示例
+# llm:
+#   provider: ollama
+#   model: llama3.2
+#   base_url: http://localhost:11434
+
+# 自定义 OpenAI 兼容 API 配置示例
+# llm:
+#   provider: custom
+#   model: your-model-name
+#   base_url: https://your-api-endpoint/v1
+#   api_key: your-api-key

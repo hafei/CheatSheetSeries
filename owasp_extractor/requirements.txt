@@ -1,0 +1,13 @@
+# OWASP 安全规则提取器依赖
+
+# 核心依赖
+pydantic>=2.0.0           # 数据模型验证
+httpx>=0.25.0             # HTTP客户端（支持异步）
+
+# 可选依赖 - 根据使用的LLM服务商安装
+# openai>=1.0.0           # OpenAI官方SDK（可选）
+# anthropic>=0.18.0       # Anthropic官方SDK（可选）
+
+# 开发依赖
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
