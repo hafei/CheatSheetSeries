@@ -13,3 +13,4 @@ package-lock.json
 yarn.lock
 venv
 .idea/
+owasp_extractor/config.yaml

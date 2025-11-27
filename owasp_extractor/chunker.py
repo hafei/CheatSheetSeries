@@ -108,8 +108,24 @@ class MarkdownChunker:
         # 构建章节树
         section_tree = self._build_section_tree(lines, file_name, main_title)
         
-        # 转换为平坦的分片列表
+        # 合并过短的相邻分片，避免丢弃大量短小但有意义的章节
+        merged_sections: List[MarkdownSection] = []
         for section in section_tree:
+            if not merged_sections:
+                merged_sections.append(section)
+                continue
+
+            # 如果当前分片太短，则合并到前一个分片
+            if len(section.content.strip()) < self.min_chunk_length:
+                prev = merged_sections[-1]
+                prev.content = prev.content + '\n' + section.content
+                prev.end_line = section.end_line
+                prev.code_blocks.extend(section.code_blocks)
+            else:
+                merged_sections.append(section)
+
+        # 过滤合并后的分片列表，移除仍然太短或质量不足的分片
+        for section in merged_sections:
             if self._is_valid_section(section):
                 sections.append(section)
         

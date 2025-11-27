@@ -202,6 +202,7 @@ def run_chunk_only(args):
 def run_extraction_pipeline(args):
     """运行完整提取流程"""
     from .pipeline import OWASPExtractionPipeline
+    from .config_loader import load_config, ConfigError
     
     print("🚀 OWASP安全规则提取器")
     print("=" * 60)
@@ -212,19 +213,69 @@ def run_extraction_pipeline(args):
     print(f"   并发数: {args.max_concurrent}")
     print("=" * 60)
     
-    # 创建流水线
-    pipeline = OWASPExtractionPipeline(
-        llm_provider=args.provider,
-        llm_model=args.model,
-        llm_api_key=args.api_key,
-        llm_base_url=args.base_url,
-        llm_temperature=args.temperature,
-        chunk_min_length=args.min_chunk,
-        chunk_max_length=args.max_chunk,
-        include_code_required=args.require_code,
-        max_concurrent=args.max_concurrent,
-        retry_count=args.retry,
-    )
+    # 尝试从配置文件加载（如果存在），CLI参数优先覆盖配置文件中的值
+    cfg_obj = None
+    try:
+        cfg_obj = load_config()
+    except ConfigError as e:
+        if args.verbose:
+            print(f"⚠️ 配置加载警告: {e}")
+
+    if cfg_obj is not None:
+        # 将配置对象转换为构造参数，并用CLI参数覆盖显式提供的值
+        pipeline_kwargs = {
+            'llm_provider': cfg_obj.llm_provider,
+            'llm_model': cfg_obj.llm_model,
+            'llm_api_key': cfg_obj.llm_api_key,
+            'llm_base_url': cfg_obj.llm_base_url,
+            'llm_temperature': cfg_obj.llm_temperature,
+            'llm_max_tokens': cfg_obj.llm_max_tokens,
+            'chunk_min_length': cfg_obj.chunk_min_length,
+            'chunk_max_length': cfg_obj.chunk_max_length,
+            'include_code_required': cfg_obj.include_code_blocks,
+            'max_concurrent': cfg_obj.max_concurrent,
+            'retry_count': cfg_obj.retry_count,
+            'retry_delay': cfg_obj.retry_delay,
+            'output_dir': cfg_obj.output_dir,
+        }
+
+        # CLI覆盖规则（仅在与默认不同或显式提供时覆盖）
+        if args.provider and args.provider != 'openai':
+            pipeline_kwargs['llm_provider'] = args.provider
+        if args.model:
+            pipeline_kwargs['llm_model'] = args.model
+        if args.api_key:
+            pipeline_kwargs['llm_api_key'] = args.api_key
+        if args.base_url:
+            pipeline_kwargs['llm_base_url'] = args.base_url
+        if args.temperature is not None and args.temperature != 0.1:
+            pipeline_kwargs['llm_temperature'] = args.temperature
+        if args.min_chunk is not None and args.min_chunk != 100:
+            pipeline_kwargs['chunk_min_length'] = args.min_chunk
+        if args.max_chunk is not None and args.max_chunk != 8000:
+            pipeline_kwargs['chunk_max_length'] = args.max_chunk
+        if args.require_code:
+            pipeline_kwargs['include_code_required'] = True
+        if args.max_concurrent is not None and args.max_concurrent != 3:
+            pipeline_kwargs['max_concurrent'] = args.max_concurrent
+        if args.retry is not None and args.retry != 3:
+            pipeline_kwargs['retry_count'] = args.retry
+
+        pipeline = OWASPExtractionPipeline(**pipeline_kwargs)
+    else:
+        # 未找到配置文件，使用CLI参数构建流水线
+        pipeline = OWASPExtractionPipeline(
+            llm_provider=args.provider,
+            llm_model=args.model,
+            llm_api_key=args.api_key,
+            llm_base_url=args.base_url,
+            llm_temperature=args.temperature,
+            chunk_min_length=args.min_chunk,
+            chunk_max_length=args.max_chunk,
+            include_code_required=args.require_code,
+            max_concurrent=args.max_concurrent,
+            retry_count=args.retry,
+        )
     
     # 确定文件模式
     if args.file:

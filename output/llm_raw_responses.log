@@ -1,0 +1,920 @@
+
+--- 2025-11-27T02:13:47.271194Z | file=AJAX_Security_Cheat_Sheet.md | section=Introduction
+
+
+--- 2025-11-27T02:49:49.938691Z | file=CI_CD_Security_Cheat_Sheet.md | section=Secure Configuration
+[
+  {
+    "rule_name": "禁止自动合并（Avoid Auto-Merge）",
+    "language": "General",
+    "vulnerability": "CI/CD 供应链/未审查代码合并",
+    "severity": "High",
+    "rationale": "自动合并会在未充分人工审查或未触发必要安全检查时将变更并入主分支，容易导致恶意代码或配置被自动部署到生产环境。强制人工或受控流程可以阻断未经授权的变更。",
+    "bad_code": "name: auto-merge\non:\n  pull_request:\n    types: [synchronize, opened]\njobs:\n  merge:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Auto merge PR\n        uses: pascalgn/automerge-action@v0.15.0\n        with:\n          mergeMethod: squash\n          github_token: ${{ secrets.GITHUB_TOKEN }}",
+    "good_code": "{\n  \"required_pull_request_reviews\": {\n    \"dismiss_stale_reviews\": true,\n    \"require_code_owner_reviews\": true,\n    \"required_approving_review_count\": 1\n  },\n  \"enforce_admins\": true,\n  \"required_status_checks\": {\n    \"strict\": true,\n    \"contexts\": [\"ci/build\", \"security/sast\"]\n  }\n}\n# 示例：通过分支保护（Branch Protection）策略要求评审和状态检查，从而禁止在未满足条件下合并",
+    "description": "禁止在通过自动化或动作未经审查直接合并PR。关键词：自动合并、Branch Protection、Pull Request、审查、CI 状态检查。建议使用分支保护策略和必需的CI检查来阻止自动合并。",
+    "tags": [
+      "自动合并",
+      "分支保护",
+      "CI/CD",
+      "审查",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "强制 Pull Request 审查且不可绕过",
+    "language": "General",
+    "vulnerability": "未审查恶意代码合并 / 供应链攻击",
+    "severity": "High",
+    "rationale": "强制代码审查可以让不同的人检查变更，发现恶意或不安全的提交；禁止绕过保证审查步骤总会执行，从而降低注入风险。",
+    "bad_code": "直接在主分支上允许推送：\n# 开发者直接执行\ngit checkout main\ngit add .\ngit commit -m \"quick fix\"\ngit push origin main\n# 没有审查流程，存在高风险",
+    "good_code": "rules:\n  - name: Require PR reviews before merging\n    settings:\n      required_approving_review_count: 2\n      dismiss_stale_reviews: true\n      require_code_owner_reviews: true\n# 示例：在 SCM 或平台中配置分支保护策略，要求至少两次批准并启用代码所有者审查，禁止通过管理员绕过",
+    "description": "要求所有合并通过 Pull Request 并强制审查，且禁止绕过审查步骤。关键词：Pull Request、审查、分支保护、require_reviews，适用于降低恶意代码合并风险。",
+    "tags": [
+      "PR审查",
+      "分支保护",
+      "代码审计",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "使用受保护分支（Protected Branches）",
+    "language": "General",
+    "vulnerability": "未授权推送/分支篡改",
+    "severity": "High",
+    "rationale": "受保护分支可以限制谁能直接推送、强制通过CI状态检查并要求审查，从而保护关键分支（如 main / master / release）不被直接修改或注入恶意代码。",
+    "bad_code": null,
+    "good_code": "{
+  \"required_status_checks\": { \"strict\": true, \"contexts\": [\"ci/build\", \"security/sast\"] },
+  \"enforce_admins\": true,
+  \"required_pull_request_reviews\": { \"required_approving_review_count\": 1 },
+  \"restrictions\": { \"users\": [\"alice\",\"bob\"], \"teams\": [\"dev-team\"] }
+}\n# 示例：为关键分支启用分支保护（保护推送、强制检查、限制可推送的用户/团队）",
+    "description": "为主分支或发布分支启用保护策略，限制推送权限并强制CI检查与审查。关键词：受保护分支、限制推送、状态检查、审查，预防未经授权的直接修改。",
+    "tags": [
+      "受保护分支",
+      "分支策略",
+      "权限控制",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "强制提交签名（Require Signed Commits）",
+    "language": "Git",
+    "vulnerability": "伪造提交/归属不可验证（供应链完整性）",
+    "severity": "High",
+    "rationale": "签署提交（GPG/SSH）可以为提交来源提供密码学证明，防止攻击者冒充贡献者提交并提高审计可信度。",
+    "bad_code": "git commit -m \"fix bug\"\n# 普通未签名提交，无法验证作者真实性",
+    "good_code": "git config --global user.signingkey 0xYOURKEYID\ngit commit -S -m \"Signed fix for issue\"\n# 或在仓库级别启用签署检查：\n# GitHub: 在分支保护中启用 \"Require signed commits\"",
+    "description": "强制使用 GPG/SSH 对提交进行签名并在 SCM 中开启签名检验。关键词：签名提交、GPG、提交完整性、Require signed commits，可防止伪造作者身份。",
+    "tags": [
+      "签名提交",
+      "GPG",
+      "代码完整性",
+      "Git"
+    ]
+  },
+  {
+    "rule_name": "最小权限与限制外部贡献者",
+    "language": "General",
+    "vulnerability": "权限过大导致滥用 / 恶意贡献者注入",
+    "severity": "High",
+    "rationale": "限制外部或临时贡献者的权限、减少可接触资源面并使用最小权限原则可以降低因账户或凭据被滥用导致的风险。",
+    "bad_code": null,
+    "good_code": "# 策略示例（描述性配置）\n- 对外部贡献者提供只读或受限分支访问\n- 使用团队/角色控制权限，不使用默认宽泛权限\n- 对临时协作者设置过期时间并审查权限\n# 实施举例：在企业 SCM 中为外部协作者创建 'limited' 角色，只允许 Fork + PR，禁止直接推送",
+    "description": "对外部/临时贡献者采用最小权限原则，限制能访问主仓库的能力并使用过期/可审计的权限。关键词：最小权限、外部贡献者、角色、权限管理，有效降低供应链风险。",
+    "tags": [
+      "最小权限",
+      "权限管理",
+      "外部贡献者",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "为 SCM 与 CI/CD 平台启用多因素认证（MFA）",
+    "language": "General",
+    "vulnerability": "账号被盗/凭据泄露导致的未授权访问",
+    "severity": "High",
+    "rationale": "启用 MFA 能显著增加账号被盗后的防护难度，即便凭据泄露攻击者也难以利用，有效保护关键系统（SCM、CI/CD 控制台）。",
+    "bad_code": null,
+    "good_code": "# 在平台管理控制台或组织安全设置中启用 MFA：\n# GitHub/GitLab/CI控制台：Organization Settings -> Security -> Require two-factor authentication for all users\n# 示例命令（描述）：请管理员在门户中强制启用并审计未启用用户",
+    "description": "对所有访问 SCM 与 CI/CD 的账户强制使用多因素认证（MFA），确保单凭密码无法登录关键系统。关键词：MFA、二次认证、账户安全、组织策略。",
+    "tags": [
+      "MFA",
+      "账户安全",
+      "访问控制",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "在隔离节点或容器中执行构建（Build Isolation）",
+    "language": "Jenkinsfile/YAML",
+    "vulnerability": "构建环境被利用进行横向移动或持久化攻击",
+    "severity": "High",
+    "rationale": "将构建任务限制在隔离的节点/容器中，避免与主控或其它任务共享敏感凭据或宿主机资源，从而减少利用构建环境进行持久化或横向移动的风险。",
+    "bad_code": "pipeline {\n  agent any\n  stages {\n    stage('Build') {\n      steps { sh 'make build' }\n    }\n  }\n}\n# 使用共享 agent/任意节点，可能导致敏感数据暴露或干扰",
+    "good_code": "pipeline {\n  agent { label 'isolated-builder' }\n  stages {\n    stage('Build') {\n      steps {\n        container('build-container') {\n          sh 'make build'\n        }\n      }\n    }\n  }\n}\n# 在 Jenkins/Kubernetes 中为构建使用专用隔离节点或容器，确保网络与运行时隔离",
+    "description": "在专用、隔离的节点或容器中执行构建以限制攻击面并保护凭据。关键词：构建隔离、Jenkins agent、容器隔离、专用节点，防止横向移动与持久化威胁。",
+    "tags": [
+      "隔离",
+      "构建节点",
+      "Jenkinsfile",
+      "CI/CD"
+    ]
+  },
+  {
+    "rule_name": "使用 TLS 1.2+ 加密 SCM 与 CI/CD 通信",
+    "language": "Nginx",
+    "vulnerability": "中间人攻击（MITM）/ 明文凭据窃取",
+    "severity": "High",
+    "rationale": "配置和限制为 TLS 1.2 或更高版本能够防止已知弱加密协议（如 TLS1.0/1.1）被利用，从而保护凭据和敏感数据在传输中的安全性。",
+    "bad_code": "server {\n  listen 80;\n  server_name ci.example.com;\n  # 未启用 TLS，通信明文暴露\n}",
+    "good_code": "server {\n  listen 443 ssl;\n  server_name ci.example.com;\n\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';\n  ssl_prefer_server_ciphers on;\n  ssl_session_cache shared:SSL:10m;\n\n  location / { proxy_pass http://ci_backend; }\n}\n# 示例：Nginx 强制 TLSv1.2+，禁用弱协议与弱加密套件",
+    "description": "强制 SCM 与 CI/CD 平台使用 TLS1.2 或更高版本并禁用弱协议，防止中间人攻击窃取凭据。关键词：TLS1.2、TLS1.3、Nginx、加密传输、MITM。",
+    "tags": [
+      "TLS",
+      "加密传输",
+      "Nginx",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "在 CI 配置中进行外部/敏感配置分离（将 CI 配置存放于专用仓库）",
+    "language": "GitLab CI YAML",
+    "vulnerability": "仓库内 CI 文件被篡改导致流水线被污染",
+    "severity": "High",
+    "rationale": "将管线配置存放在专用、受保护的仓库或中心配置库，避免与应用代码同仓库使恶意提交轻易修改 CI 行为；若必须与代码同仓库，审查合并以防止配置注入。",
+    "bad_code": "在每个应用仓库中直接维护未受保护的 .gitlab-ci.yml 或 .github/workflows，任何提交都可修改构建/部署流程（未示例化具体bad code）",
+    "good_code": "include:\n  - project: 'org/ci-config'\n    file: '/templates/.gitlab-ci.yml'\n# 示例：GitLab CI 使用 include 将主 CI 配置保存在单独受保护的仓库 org/ci-config，从而避免应用仓库直接控制流水线逻辑",
+    "description": "将 CI/CD 管线配置在受控的中心仓库或外部位置，并在应用仓库中仅引用，以降低配置被任意修改导致流水线被污染的风险。关键词：CI 配置分离、include、中心化配置、配置审计。",
+    "tags": [
+      "CI配置",
+      "配置分离",
+      "GitLab CI",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "在流水线中加入 SAST/DAST/IaC 扫描阶段",
+    "language": "GitLab CI YAML",
+    "vulnerability": "代码或基础设施配置中的漏洞未被早期发现",
+    "severity": "Medium",
+    "rationale": "将静态/动态应用安全测试以及基础设施即代码扫描纳入流水线，能在合并前发现常见缺陷与不安全配置，降低漏洞引入生产的风险。",
+    "bad_code": "stages:\n  - build\n  - test\n  - deploy\n# 没有安全扫描阶段，合并前未执行 SAST/DAST/IaC 扫描",
+    "good_code": "stages:\n  - build\n  - sast\n  - dast\n  - iac_scan\n  - deploy\n\nsast:\n  stage: sast\n  image: owasp/dependency-check:latest\n  script:\n    - dependency-check.sh --scan . --format XML\n  allow_failure: false\n\niac_scan:\n  stage: iac_scan\n  image: aquasec/trivy:latest\n  script:\n    - trivy config --severity HIGH,CRITICAL ./infra\n# 示例：在 CI 中添加 SAST、DAST、IaC 扫描步骤并使扫描失败阻止合并",
+    "description": "在 CI/CD 流水线中集成 SAST、DAST 和 IaC 扫描工具（如 Trivy、OWASP Dependency-Check），确保高危问题阻止合并或生成告警。关键词：SAST、DAST、IaC、Trivy、自动化扫描、CI 阶段。",
+    "tags": [
+      "SAST",
+      "DAST",
+      "IaC",
+      "GitLab CI",
+      "安全扫描"
+    ]
+  },
+  {
+    "rule_name": "在生产部署前要求人工审核/手动批准（Manual Approval）",
+    "language": "GitLab CI YAML",
+    "vulnerability": "自动化部署导致恶意或错误变更直接上线",
+    "severity": "High",
+    "rationale": "对生产部署引入人为审查环节能够在自动化流程之外提供额外检查，拦截恶意或不成熟的变更，尤其在涉及敏感系统时非常重要。",
+    "bad_code": "deploy_production:\n  stage: deploy\n  script:\n    - ./deploy.sh\n  only:\n    - main\n# 自动化直接部署到生产，缺乏人工批准",
+    "good_code": "deploy_production:\n  stage: deploy\n  when: manual\n  allow_failure: false\n  script:\n    - ./deploy.sh\n# GitLab CI 手动触发作业示例：当需要将变更部署至生产时，需要运维/发布负责人手动批准",
+    "description": "将部署至生产设为需人工手动触发或审批的流水线步骤，以避免自动将未经充分审查或存在风险的变更上线。关键词：手动批准、生产部署、when: manual、审核步骤。",
+    "tags": [
+      "人工批准",
+      "手动触发",
+      "生产部署",
+      "GitLab CI"
+    ]
+  },
+  {
+    "rule_name": "避免在流水线容器中使用 --privileged 标志",
+    "language": "Docker",
+    "vulnerability": "容器逃逸 / 宿主被完全控制",
+    "severity": "High",
+    "rationale": "--privileged 赋予容器过多宿主机权限，容易被利用进行容器逃逸和宿主机提权。应尽量使用最小能力集合、限制能力和用户命名空间来降低风险。",
+    "bad_code": "docker run --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock my-ci-image:latest sh -c \"build-and-deploy.sh\"\n# 使用 --privileged 和挂载 docker.sock 导致宿主被完全控制",
+    "good_code": "docker run --rm \\\n  --cap-drop=ALL \\\n  --cap-add=CAP_NET_BIND_SERVICE \\\n  --user 1000:1000 \\\n  -v /tmp/build:/build \\\n  my-ci-image:latest sh -c \"build-and-deploy.sh\"\n# 不使用 --privileged，去掉多余 capability，运行非 root 用户，并避免直接挂载 docker.sock",
+    "description": "禁止在 CI 步骤中使用 Docker 的 --privileged 并避免挂载 docker.sock，改为降权容器、限制 capability 与使用用户命名空间以减少宿主风险。关键词：--privileged、docker.sock、容器权限、CAP_DROP。",
+    "tags": [
+      "Docker",
+      "容器安全",
+      "--privileged",
+      "权限最小化"
+    ]
+  },
+  {
+    "rule_name": "将流水线配置纳入版本控制（Pipeline as Code）",
+    "language": "General",
+    "vulnerability": "流水线不可追溯/配置突变导致风险无法审计",
+    "severity": "Medium",
+    "rationale": "以代码形式管理 CI 配置便于审计、回滚与变更控制，并确保配置变更经过相同的审查流程，避免未记录的 ad-hoc 修改导致安全问题。",
+    "bad_code": null,
+    "good_code": "# 实践示例：将 .github/workflows/*.yml 或 .gitlab-ci.yml 放在受保护仓库中并通过 PR 流程变更\n# 确保每次 pipeline 配置修改都有 PR、审查和 CI 扫描",
+    "description": "将 CI/CD 配置文件纳入版本控制并通过 PR 流程管理变更，保证可审计和可回滚。关键词：Pipeline as Code、版本控制、审计、变更管理、CI 配置。",
+    "tags": [
+      "Pipeline as Code",
+      "版本控制",
+      "审计",
+      "General"
+    ]
+  },
+  {
+    "rule_name": "限制对 CI/CD 平台的网络访问（按 IP 白名单）",
+    "language": "Nginx",
+    "vulnerability": "来自任意网络的未经授权访问/暴露界面被滥用",
+    "severity": "Medium",
+    "rationale": "通过网络层限制（防火墙或反向代理）仅允许受信任 IP 或网段访问 CI/CD 控制面板，可以显著减少被外部暴力攻击或凭据窃取后的滥用风险。",
+    "bad_code": "location / {\n  proxy_pass http://ci_backend;\n  # 没有网络访问限制，任何来源都可访问 CI 控制台\n}",
+    "good_code": "location / {\n  allow 203.0.113.0/24;    # 允许企业网段\n  allow 198.51.100.10;     # 允许运维管理员IP\n  deny all;                # 默认拒绝其它访问\n  proxy_pass http://ci_backend;\n}\n# 示例：在反向代理（Nginx）或防火墙层做 IP 白名单限制",
+    "description": "通过反向代理或防火墙对 CI/CD 控制界面实施按 IP 白名单的访问控制，仅允许受信网络访问。关键词：IP 白名单、访问控制、反向代理、Nginx，降低暴露面。",
+    "tags": [
+      "IP 白名单",
+      "访问控制",
+      "Nginx",
+      "网络安全"
+    ]
+  },
+  {
+    "rule_name": "启用并集中记录流水线日志以便可见性与审计",
+    "language": "General",
+    "vulnerability": "缺乏可观测性导致入侵或异常活动难以检测",
+    "severity": "Medium",
+    "rationale": "启用详细日志并将日志集中到 SIEM/日志系统有助于检测异常行为、审计变更和进行事后调查，是快速响应安全事件的关键要素。",
+    "bad_code": null,
+    "good_code": "# 建议：\n- 将 CI 日志发送到集中日志平台（ELK/Graylog/Splunk）\n- 保留构建元数据（构建ID、触发者、提交ID）\n- 配置告警规则：异常触发者、非常规时间部署、频繁失败的构建\n# 示例：通过 webhook 或日志收集代理将流水线日志推送到集中系统",
+    "description": "为 CI/CD 平台启用详细日志并集中收集到 SIEM 中，保留构建与部署的上下文信息以便告警与审计。关键词：日志、集中化、SIEM、审计、可见性。",
+    "tags": [
+      "日志",
+      "可见性",
+      "审计",
+      "SIEM",
+      "General"
+    ]
+  }
+]
+
+--- 2025-11-27T03:04:24.428314Z | file=DOM_Clobbering_Prevention_Cheat_Sheet.md | section=Summary of Guidelines
+[
+  {
+    "rule_name": "使用 HTML 消毒器过滤不信任的 HTML",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / XSS",
+    "severity": "High",
+    "rationale": "直接将不受信任的数据插入 DOM（如 innerHTML、insertAdjacentHTML）会引入可被利用的元素或属性，使用成熟的 HTML 消毒库在插入前清理危险标签和属性可以移除载入可执行脚本或构造可用于 DOM clobbering 的元素。",
+    "bad_code": "const userHtml = location.hash.substring(1);\nconst container = document.getElementById('out');\n// 直接插入不可信内容，易导致 XSS/DOM Clobbering\ncontainer.innerHTML = userHtml;",
+    "good_code": "// 使用已知库 DOMPurify 进行消毒\nconst userHtml = location.hash.substring(1);\nconst container = document.getElementById('out');\n// 假设 DOMPurify 已加载\nconst safe = DOMPurify.sanitize(userHtml);\ncontainer.innerHTML = safe;",
+// Description around 120-160 Chinese characters:
+    "description": "对插入 DOM 的不可信 HTML 使用可靠的消毒器（如 DOMPurify），避免直接 innerHTML/insertAdjacentHTML 导致 XSS 或通过特殊元素/属性触发 DOM Clobbering。关键词：innerHTML、DOMPurify、sanitize、XSS、DOM Clobbering、防注入。",
+    "tags": [
+      "DOM Clobbering",
+      "XSS",
+      "JavaScript",
+      "innerHTML",
+      "DOMPurify",
+      "sanitize"
+    ]
+  },
+  {
+    "rule_name": "使用严格的 Content-Security-Policy 限制脚本来源",
+    "language": "General",
+    "vulnerability": "XSS / DOM Clobbering",
+    "severity": "High",
+    "rationale": "CSP 能在浏览器层阻止内联脚本和不可信脚本执行，减少攻击者利用 DOM 注入或 clobbering 创建可执行 payload 的可能性，作为防线降低成功攻击面。",
+    "bad_code": "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self' 'unsafe-inline'\">",
+    "good_code": "/* 服务器响应头示例：严格禁止内联脚本并允许使用 nonce */\nContent-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<RANDOM_VALUE>' ; object-src 'none'; base-uri 'self';",
+    "description": "通过配置严格的 CSP（禁止 'unsafe-inline'、为可信脚本使用 nonce 或 hash）可以防止注入脚本执行，作为对 DOM 注入与 DOM Clobbering 的第二道防线。关键词：CSP、nonce、script-src、XSS、防护。",
+    "tags": [
+      "Content-Security-Policy",
+      "CSP",
+      "XSS",
+      "Browser",
+      "Configuration"
+    ]
+  },
+  {
+    "rule_name": "冻结关键应用对象或缓存内置函数引用",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / API Tampering",
+    "severity": "High",
+    "rationale": "通过对应用关键对象使用 Object.freeze 或缓存内置方法的绑定引用，可以防止外部脚本或被注入的 DOM 元素覆盖/替换这些引用，从而避免利用 clobbering 改变行为。",
+    "bad_code": "// 可被覆盖的全局对象和方法\nwindow.APP = {api: {doSomething: function(){ /* ... */ }}};\n// 有人可以 later 改写 window.APP.api.doSomething",
+    "good_code": "// 缓存内置方法并冻结应用命名空间\nconst getById = document.getElementById.bind(document);\nconst APP = Object.freeze({\n  api: Object.freeze({\n    doSomething: function(){ /* ... */ }\n  })\n});\nObject.defineProperty(window, 'APP', { value: APP, writable: false });",
+    "description": "通过缓存 document/window 的方法引用（bind）并对应用命名空间使用 Object.freeze 或不可写属性，避免运行时被覆盖或替换，降低 DOM Clobbering 与 API 篡改风险。关键词：Object.freeze、bind、缓存引用、不可写、命名空间。",
+    "tags": [
+      "DOM Clobbering",
+      "JavaScript",
+      "Object.freeze",
+      "bind",
+      "API Tampering"
+    ]
+  },
+  {
+    "rule_name": "对所有插入 DOM 树的数据进行验证",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / XSS",
+    "severity": "High",
+    "rationale": "通过白名单或严格模式验证用于 id/name/class/属性和值的数据，避免包含可用于创建特殊元素或覆盖内置 API 的字符串，从源头减少能触发 clobbering 的不安全输入。",
+    "bad_code": "const id = location.hash.slice(1);\n// 直接使用未经验证的 id 作为元素 id\nconst el = document.createElement('div');\nel.id = id;\ndocument.body.appendChild(el);",
+    "good_code": "const raw = location.hash.slice(1);\n// 仅允许简单字母、数字、下划线及短横，拒绝包含 '=' 或 'constructor' 等可疑关键字\nconst id = /^[A-Za-z_][A-Za-z0-9_\\-:]*$/.test(raw) ? raw : 'fallback';\nconst el = document.createElement('div');\nel.id = id;\ndocument.body.appendChild(el);",
+    "description": "插入 DOM 的所有数据应做白名单校验或严格格式化（如 id/name 字符集合），拒绝含有特殊关键字和字符，防止通过构造特定元素或属性触发 DOM Clobbering 或 XSS。关键词：输入验证、白名单、id 校验、DOM 插入、安全过滤。",
+    "tags": [
+      "Input Validation",
+      "DOM Clobbering",
+      "JavaScript",
+      "id validation",
+      "XSS"
+    ]
+  },
+  {
+    "rule_name": "使用显式变量声明避免隐式全局",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Global Collision",
+    "severity": "Medium",
+    "rationale": "隐式全局变量（未使用 var/let/const）可能与页面元素或其他脚本产生命名冲突，被 DOM clobbering 覆盖或被元素属性污染，使用显式声明限制作用域并减少冲突面。",
+    "bad_code": "// 隐式全局，会污染或被覆盖\nmyWidget = document.getElementById('widget');\n// 如果页面存在 id='myWidget' 可能引发冲突",
+    "good_code": "// 使用 let/const 声明，限定作用域\nconst myWidget = document.getElementById('widget');\n// 或者放在模块/闭包中：\n(function() {\n  const internal = document.getElementById('widget');\n})();",
+    "description": "始终使用 var/let/const 或模块化代码避免隐式全局，降低与 DOM 元素或第三方脚本的命名冲突概率，从而减少 DOM Clobbering 和全局污染风险。关键词：显式声明、let、const、全局污染、命名冲突。",
+    "tags": [
+      "JavaScript",
+      "Scope",
+      "DOM Clobbering",
+      "let",
+      "const",
+      "Global Collision"
+    ]
+  },
+  {
+    "rule_name": "不要把自定义全局变量挂在 document 或 window 上",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Global Pollution",
+    "severity": "High",
+    "rationale": "将应用状态或 API 挂到 window/document 容易被页面元素或第三方脚本覆盖，使用模块作用域、闭包或不可写属性来暴露最小接口，减少被 clobber 的机会。",
+    "bad_code": "// 坏例子：直接挂载到 window，会被覆盖\nwindow.user = { name: 'alice' };",
+    "good_code": "// 好例子：使用模块模式或将命名空间设为不可写\nconst MYAPP = (function(){\n  const state = { user: { name: 'alice' } };\n  return {\n    getUser: () => state.user\n  };\n})();\nObject.defineProperty(window, 'MYAPP', { value: MYAPP, writable: false });",
+    "description": "避免将应用数据或函数直接挂载到 window/document，使用闭包、模块或将命名空间设为不可写，降低被页面元素命名覆盖（DOM Clobbering）或第三方脚本篡改的风险。关键词：window、document、命名空间、闭包、Object.defineProperty。",
+    "tags": [
+      "Global Pollution",
+      "DOM Clobbering",
+      "JavaScript",
+      "namespace",
+      "Object.defineProperty"
+    ]
+  },
+  {
+    "rule_name": "在使用 document 内置 API 前进行验证或缓存绑定引用",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / API Tampering",
+    "severity": "High",
+    "rationale": "document 或 window 上的内置 API 可能被元素或脚本覆盖。通过 typeof 检测或缓存绑定（bind）引用并使用绑定引用调用，可以保证使用到的是正确的内置实现而非被替换的值。",
+    "bad_code": "// 直接使用，可能被覆盖为非函数\nconst el = document.getElementById('x');\nif (!el) throw 'no element';",
+    "good_code": "// 缓存绑定并验证类型\nif (typeof document.getElementById !== 'function') throw new Error('document.getElementById tampered');\nconst getById = document.getElementById.bind(document);\nconst el = getById('x');",
+    "description": "在调用 document/window 的内置 API 前，先用 typeof/instanceof 验证类型，或用 .bind(document) 缓存方法引用，防止被覆盖或替换导致逻辑被攻击者控制。关键词：bind、类型检测、document.getElementById、API 校验。",
+    "tags": [
+      "API Tampering",
+      "DOM Clobbering",
+      "JavaScript",
+      "bind",
+      "type check"
+    ]
+  },
+  {
+    "rule_name": "强制类型检查以避免类型混淆攻击",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Type Confusion",
+    "severity": "Medium",
+    "rationale": "弱类型比较或未显式检查输入类型可能导致接受异常对象或字符串，攻击者可通过传入非预期类型（如对象替代函数）触发错误或劫持逻辑，显式 typeof/instanceof 或使用 TypeScript 可降低风险。",
+    "bad_code": "// 未检查类型，直接调用\nconst maybeFn = getConfig('onClick');\nmaybeFn();",
+    "good_code": "// 显式检查或使用 TypeScript 的类型约束\nconst maybeFn = getConfig('onClick');\nif (typeof maybeFn === 'function') {\n  maybeFn();\n} else {\n  // 处理非函数情况\n}",
+    "description": "在处理外部或配置输入时做显式类型检查（typeof/instanceof）或采用 TypeScript，防止字符串/对象被误当作函数或方法调用，从而避免逻辑被利用或触发异常。关键词：类型检查、typeof、TypeScript、类型混淆、安全调用。",
+    "tags": [
+      "Type Checking",
+      "JavaScript",
+      "TypeScript",
+      "DOM Clobbering",
+      "typeof"
+    ]
+  },
+  {
+    "rule_name": "启用严格模式以避免隐式行为和意外全局",
+    "language": "JavaScript",
+    "vulnerability": "Global Leakage / DOM Clobbering",
+    "severity": "Low",
+    "rationale": "'use strict' 禁用许多不安全或易错的语言特性（如隐式全局、忽略赋值错误等），能减少因意外全局变量或宽松语义导致的命名冲突和被 DOM 元素覆盖的风险。",
+    "bad_code": "// 未启用严格模式，可能产生隐式全局\nfunction init(){\n  config = { debug: true }; // config 成为全局\n}",
+    "good_code": "\"use strict\";\n(function(){\n  // 严格模式下，赋值给未声明变量会抛错，避免隐式全局\n  let config = { debug: true };\n})();",
+    "description": "在脚本或模块顶部使用 'use strict'（或使用 ES6 模块天然严格模式），防止隐式全局和其他不安全的 JS 行为，从语言层面减少因全局污染导致的 DOM Clobbering 风险。关键词：use strict、严格模式、隐式全局、模块。",
+    "tags": [
+      "JavaScript",
+      "use strict",
+      "Global Leakage",
+      "DOM Clobbering"
+    ]
+  },
+  {
+    "rule_name": "应用特性检测而非盲目依赖 API 存在性",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Compatibility Issues",
+    "severity": "Medium",
+    "rationale": "不同浏览器或页面中 API 可能不存在或被覆盖，使用能力检测（feature detection）并提供安全回退可以避免错误路径被攻击者利用，且可在调用前验证类型和行为。",
+    "bad_code": "// 直接使用，若被覆盖或不存在会抛错\nconst el = document.querySelector('.x').textContent;",
+    "good_code": "const query = (typeof document.querySelector === 'function') ? document.querySelector.bind(document) : function(s){ return document.getElementById(s.slice(1)); };\nconst el = query('.x');\nif (el) { /* safe usage */ }",
+    "description": "对浏览器功能使用特性检测（typeof、in 等），并提供经过验证的回退实现或缓存绑定，避免依赖被替换或不存在的 API 引起异常路径从而被利用。关键词：feature detection、querySelector、fallback、bind、兼容性。",
+    "tags": [
+      "Feature Detection",
+      "JavaScript",
+      "DOM Clobbering",
+      "querySelector",
+      "compatibility"
+    ]
+  },
+  {
+    "rule_name": "将变量限制在局部作用域，避免全局泄露",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Global Collision",
+    "severity": "High",
+    "rationale": "通过模块化、闭包或块级作用域（let/const）将变量限定在最小可见范围，减少与 DOM 元素或其他脚本的命名冲突概率，降低 DOM clobbering 成功的窗口。",
+    "bad_code": "// 全局变量，容易与 DOM id/name 冲突\nvar selected = null;\nfunction init(){ selected = document.getElementById('sel'); }",
+    "good_code": "// 使用模块或 IIFE 限定作用域\n(function(){\n  let selected = null;\n  function init(){ selected = document.getElementById('sel'); }\n  window.addEventListener('load', init);\n})();",
+    "description": "通过使用模块化、IIFE、ES6 模块或 let/const 将变量限制在局部作用域，避免暴露到全局对象，从而减少被 DOM 元素命名覆盖或第三方脚本篡改的风险。关键词：作用域、模块、IIFE、let、const、命名冲突。",
+    "tags": [
+      "Scope",
+      "JavaScript",
+      "DOM Clobbering",
+      "IIFE",
+      "module"
+    ]
+  },
+  {
+    "rule_name": "在生产中使用独一无二的变量/命名空间",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Naming Collision",
+    "severity": "Medium",
+    "rationale": "通用或常见的标识符更易与页面元素或第三方脚本冲突，通过添加前缀、使用长唯一名称、Symbol 或模块化命名空间可以降低被 clobber 的概率。",
+    "bad_code": "// 常见名称，易冲突\nwindow.config = { mode: 'dev' };",
+    "good_code": "// 唯一前缀或 Symbol\nconst MYAPP_CONFIG = Object.freeze({ mode: 'prod' });\nObject.defineProperty(window, 'MYAPP_CONFIG', { value: MYAPP_CONFIG, writable: false });\n// 或使用 Symbol 保持私有\nconst INTERNAL = Symbol('myapp_internal');",
+    "description": "避免使用通用全局名（如 config、name），在生产中使用带前缀的唯一命名空间、常量或 Symbol，并设为只读，减少与 DOM 元素 id/name 的冲突与被覆盖风险。关键词：命名空间、前缀、Symbol、只读、命名冲突。",
+    "tags": [
+      "Naming",
+      "JavaScript",
+      "DOM Clobbering",
+      "namespace",
+      "Symbol"
+    ]
+  },
+  {
+    "rule_name": "使用面向对象及封装技术隐藏内部实现",
+    "language": "JavaScript",
+    "vulnerability": "DOM Clobbering / Information Exposure",
+    "severity": "Medium",
+    "rationale": "将内部状态私有化（闭包、私有字段、Symbol）并仅暴露必要 API，可以防止外部脚本或被注入的 DOM 元素读取或替换内部属性，降低被 clobber 或误用的风险。",
+    "bad_code": "// 公开内部状态，易被外部修改\nclass User {\n  constructor(secret){ this.secret = secret; }\n}\nwindow.user = new User('s');",
+    "good_code": "// 使用私有字段或闭包封装\nclass User {\n  #secret;\n  constructor(secret){ this.#secret = secret; }\n  getSecret(){ return this.#secret; }\n}\nconst user = new User('s');\n// 仅暴露需要的行为，不暴露 #secret",
+    "description": "采用面向对象封装（私有字段 #、闭包或 Symbol）将敏感内部状态隐藏，只暴露最小 API，减少外部脚本或 DOM Clobbering 访问或替换内部属性的机会。关键词：封装、私有字段、#、闭包、API 最小暴露。",
+    "tags": [
+      "OOP",
+      "Encapsulation",
+      "JavaScript",
+      "DOM Clobbering",
+      "private fields"
+    ]
+  }
+]
+
+--- 2025-11-27T03:53:22.573346Z | file=Laravel_Cheat_Sheet.md | section=Cross Site Request Forgery (CSRF)
+[
+  {
+    "rule_name": "在 web 中注册 VerifyCsrfToken 中间件",
+    "language": "PHP",
+    "vulnerability": "CSRF",
+    "severity": "High",
+    "rationale": "Laravel 的 VerifyCsrfToken 中间件在服务器端验证每个状态变更请求包含的 CSRF 令牌，能阻止跨站请求伪造攻击利用用户会话发起未授权操作。",
+    "bad_code": "<?php\n/**\n * The application's route middleware groups.\n *\n * @var array\n */\nprotected $middlewareGroups = [\n    'web' => [\n        ...\n        // 忽略了 CSRF 验证中间件，导致 POST/PUT/DELETE 等请求无服务端 CSRF 校验\n        // \App\Http\Middleware\\VerifyCsrfToken::class,\n        ...\n    ],\n];",
+    "good_code": "<?php\n/**\n * The application's route middleware groups.\n *\n * @var array\n */\nprotected $middlewareGroups = [\n    'web' => [\n        ...\n         \\App\\Http\\Middleware\\VerifyCsrfToken::class,\n         ...\n    ],\n];",
+    "description": "确保在 Laravel 的 web 中间件组中注册 VerifyCsrfToken 中间件，以启用服务器端 CSRF 令牌验证，阻止利用认证会话发起的跨站请求伪造攻击。关键词：VerifyCsrfToken、middleware、web、CSRF、Laravel。",
+    "tags": ["CSRF", "Laravel", "PHP", "VerifyCsrfToken", "middleware"]
+  },
+  {
+    "rule_name": "在表单中包含 CSRF 令牌（使用 Blade @csrf 或隐藏 input）",
+    "language": "PHP",
+    "vulnerability": "CSRF",
+    "severity": "High",
+    "rationale": "将在表单中嵌入唯一的 CSRF 令牌，服务器端通过 VerifyCsrfToken 中间件验证该令牌，确保提交请求由当前页面发起而非第三方站点伪造。",
+    "bad_code": "<form method=\"POST\" action=\"/profile\">\n    <!-- 缺少 CSRF 令牌，易受 CSRF 攻击 -->\n    <input type=\"text\" name=\"name\" />\n    <button type=\"submit\">Save</button>\n</form>",
+    "good_code": "<form method=\"POST\" action=\"/profile\">\n    @csrf\n\n    <!-- Equivalent to... -->\n    <input type=\"hidden\" name=\"_token\" value=\"{{ csrf_token() }}\" />\n    <input type=\"text\" name=\"name\" />\n    <button type=\"submit\">Save</button>\n</form>",
+    "description": "在所有需要状态变更的 POST/PUT/DELETE 表单中使用 Blade 的 @csrf 指令或手动插入隐藏 _token 字段，以让服务器能够校验请求来源，防止跨站请求伪造。关键词：@csrf、csrf_token、表单、POST、Laravel。",
+    "tags": ["CSRF", "Laravel", "Blade", "表单", "csrf_token"]
+  },
+  {
+    "rule_name": "AJAX 请求发送 X-CSRF-Token 头以包含 CSRF 令牌",
+    "language": "JavaScript",
+    "vulnerability": "CSRF",
+    "severity": "High",
+    "rationale": "AJAX 请求不会自动提交表单隐藏字段，需要在请求头中包含 CSRF 令牌（如 X-CSRF-Token 或 X-CSRF-TOKEN），服务器端中间件才能识别并验证，阻止伪造的跨站 AJAX 调用。",
+    "bad_code": "// 未在 AJAX 请求中发送 CSRF 令牌，服务器将无法验证来源\nfetch('/profile', {\n  method: 'POST',\n  body: JSON.stringify({ name: 'Alice' }),\n  headers: {\n    'Content-Type': 'application/json'\n  }\n});",
+    "good_code": "<meta name=\"csrf-token\" content=\"{{ csrf_token() }}\">\n\n// 使用 Fetch\nfetch('/profile', {\n  method: 'POST',\n  body: JSON.stringify({ name: 'Alice' }),\n  headers: {\n    'Content-Type': 'application/json',\n    'X-CSRF-TOKEN': document.querySelector('meta[name=\"csrf-token\"]').getAttribute('content')\n  }\n});\n\n// 或使用 jQuery 全局配置\n$.ajaxSetup({\n  headers: {\n    'X-CSRF-TOKEN': $('meta[name=\"csrf-token\"]').attr('content')\n  }\n});",
+    "description": "对于 AJAX/JS 发起的 POST 等请求，要在请求头中设置 X-CSRF-Token（或 X-CSRF-TOKEN）并从页面 meta 或其他可靠位置读取 csrf_token，确保服务器能验证请求来源防止 CSRF。关键词：X-CSRF-Token、AJAX、fetch、jQuery、csrf_token。",
+    "tags": ["CSRF", "AJAX", "JavaScript", "X-CSRF-Token", "csrf_token"]
+  },
+  {
+    "rule_name": "仅对无状态接口或受控 webhook 排除 CSRF 校验",
+    "language": "General",
+    "vulnerability": "CSRF",
+    "severity": "High",
+    "rationale": "将路由从 CSRF 保护中排除会移除请求来源验证，容易导致 CSRF 漏洞。只有明确为无状态（如 API 使用其它认证/签名机制）或外部 webhook 且有其他验证措施时，才应排除。",
+    "bad_code": "<?php\n// 在 VerifyCsrfToken 中广泛排除路由，可能导致多个 CSRF 漏洞\nprotected $except = [\n    '*',\n    'user/*',\n    'profile/*',\n];",
+    "good_code": "<?php\nnamespace App\\Http\\Middleware;\n\nuse Illuminate\\Foundation\\Http\\Middleware\\VerifyCsrfToken as Middleware;\n\nclass VerifyCsrfToken extends Middleware\n{\n    /**\n     * The URIs that should be excluded from CSRF verification.\n     * 仅排除明确的、无状态的 API 或已用其他机制校验的 webhook 路由。\n     *\n     * @var array\n     */\n    protected $except = [\n        'api/*',        // API 路由通常使用 token/auth header；或在 API 子域启用不同策略\n        'webhook/stripe', // 仅当 webhook 使用签名验证等替代方案时才排除\n    ];\n}",
+    "description": "不要随意将常规应用路由添加到 CSRF 排除列表；仅对真实无状态 API 或经额外验证的 webhook 排除 CSRF，并确保为这些路由采用替代的认证或签名校验。关键词：$except、VerifyCsrfToken、exclude、webhook、API。",
+    "tags": ["CSRF", "Laravel", "VerifyCsrfToken", "exclude", "webhook", "API"]
+  }
+]
+
+--- 2025-11-27T04:18:04.439470Z | file=NodeJS_Docker_Cheat_Sheet.md | section=4) Don’t run containers as root
+[
+  {
+    "rule_name": "不要在容器中以 root 用户运行应用，使用非特权用户并确保文件归属",
+    "language": "Dockerfile",
+    "vulnerability": "Privilege Escalation/Container Escape due to running as root",
+    "severity": "High",
+    "rationale": "遵循最小权限原则可以将潜在攻击的影响范围降到最低。若容器内进程以 root 身份运行，即使应用被入侵，攻击者也能对容器内的资源造成更大破坏，甚至尝试容器逃逸或权限提升。通过指定非特权用户并确保应用代码和依赖文件的所有权归属该用户，可以显著降低此类风险。",
+    "bad_code": "USER node\nCMD \"npm\" \"start\"",
+    "good_code": "FROM node:lts-alpine@sha256:b2da3316acdc2bec442190a1fe10dc094e7ba4121d029cb32075ff59bb27390a\nENV NODE_ENV production\n
+
+--- 2025-11-27T04:57:51.093328Z | file=Symfony_Cheat_Sheet.md | section=Main Sections
+[
+  {
+    "rule_name": "输出编码与模板自动转义（防止XSS）",
+    "language": "Twig",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "默认在模板中对变量进行输出转义可以把特殊字符编码为实体，从而防止用户输入中注入并执行的脚本。只有在确定数据可信并包含HTML时才禁用转义。",
+    "bad_code": "<p>{{ name|raw }}</p>\n{# 当 name 来自不可信输入时，将直接输出 HTML/JS，导致 XSS #}",
+    "good_code": "<p>Hello {{name}}</p>\n{# Twig 会对 name 做自动转义，例如 '<script>alert(\"x\")</script>' 将被编码 #}\n\n{# 若确实需要输出可信 HTML： #}\n<p>{{ product.title|raw }}</p>\n{# 仅当 product.title 完全可信并经过审核时使用 |raw #}",
+    "description": "在 Twig 模板中默认使用 {{var}} 自动转义用户输入，禁止对不可信数据使用 |raw 过滤器。关键词：Twig、自动转义、|raw、XSS、模板输出转义。",
+    "tags": [
+      "XSS",
+      "Twig",
+      "output-escaping",
+      "raw",
+      "模板安全"
+    ]
+  },
+  {
+    "rule_name": "使用框架 CSRF 令牌并验证（防止CSRF）",
+    "language": "PHP/Twig",
+    "vulnerability": "CSRF",
+    "severity": "High",
+    "rationale": "在表单或敏感操作中嵌入并验证随机生成的 CSRF 令牌，可确认请求来自合法页面，防止跨站请求伪造攻击。",
+    "bad_code": "<?php\n// 不包含 CSRF 令牌或不验证令牌导致 CSRF 漏洞\n// Twig 模板直接提交没有 token 的表单\n?>\n<form action=\"{{ url('delete_post', { id: post.id }) }}\" method=\"post\">\n    <button type=\"submit\">Delete post</button>\n</form>",
+    "good_code": "{# Twig: 在表单中生成 CSRF 令牌 #}\n<form action=\"{{ url('delete_post', { id: post.id }) }}\" method=\"post\">\n    <input type=\"hidden\" name=\"token\" value=\"{{ csrf_token('delete-post') }}\">\n    <button type=\"submit\">Delete post</button>\n</form>\n\n<?php\n// Controller: 验证时需传入 id 与 token\nuse Symfony\Bundle\FrameworkBundle\Controller\AbstractController;\nuse Symfony\Component\HttpFoundation\Request;\nuse Symfony\Component\HttpFoundation\Response;\nuse Symfony\Component\Routing\Annotation\Route;\n\nclass ExampleController extends AbstractController\n{\n    #[Route('/posts/{id}', methods: ['DELETE'], name: 'delete_post')]\n    public function delete(int $id, Request $request): Response\n    {\n        $token = $request->request->get('token');\n        if ($this->isCsrfTokenValid('delete-post', $token)) {\n            // 安全地执行删除操作\n        }\n\n        // ...\n    }\n}\n?>",
+    "description": "在 Symfony 中使用内置 CSRF 保护：表单自动包含令牌，或用 csrf_token() 生成并在控制器用 isCsrfTokenValid(id, token) 验证。关键词：CSRF、csrf_token、isCsrfTokenValid、Symfony。",
+    "tags": [
+      "CSRF",
+      "Symfony",
+      "csrf_token",
+      "isCsrfTokenValid",
+      "表单安全"
+    ]
+  },
+  {
+    "rule_name": "使用参数化查询或 ORM 方法（防止SQL注入）",
+    "language": "PHP (Doctrine)",
+    "vulnerability": "SQL Injection",
+    "severity": "Critical",
+    "rationale": "通过参数化查询、使用 ORM 提供的接口或 QueryBuilder 的 setParameter，可以把用户输入与 SQL 语句分离，防止攻击者注入恶意 SQL。",
+    "bad_code": "<?php\nuse Doctrine\ORM\EntityManagerInterface;\nuse Symfony\\Bundle\\FrameworkBundle\\Controller\\AbstractController;\nuse Symfony\\Component\\HttpFoundation\\Request;\nuse Symfony\\Component\\HttpFoundation\\Response;\n\nclass ExampleController extends AbstractController {\n    \n    public function getPost(Request $request, EntityManagerInterface $em): Response\n    {\n        $id = $request->query->get('id');\n\n        $dql = \"SELECT p FROM App\\\\Entity\\\\Post p WHERE p.id = \" . $id . \";\";\n        $query = $em->createQuery($dql);\n        $post = $query->getSingleResult();\n\n        // ...\n    }\n}\n?>",
+    "good_code": "// 使用实体仓库方法\n$id = $request->query->get('id');\n$post = $em->getRepository(Post::class)->findOneBy(['id' => $id]);\n\n// 使用 DQL 参数化查询\n$query = $em->createQuery(\"SELECT p FROM App\\\\Entity\\\\Post p WHERE p.id = :id\");\n$query->setParameter('id', $id);\n$post = $query->getSingleResult();\n\n// 使用 QueryBuilder\n$qb = $em->createQueryBuilder();\n$post = $qb->select('p')\n            ->from('posts','p')\n            ->where('id = :id')\n            ->setParameter('id', $id)\n            ->getQuery()\n            ->getSingleResult();",
+    "description": "避免字符串拼接构建 DQL/SQL，使用 Doctrine 的仓库方法、DQL 参数或 QueryBuilder 的 setParameter() 来绑定用户输入，关键字：Doctrine、DQL、QueryBuilder、setParameter、参数化。",
+    "tags": [
+      "SQL Injection",
+      "Doctrine",
+      "DQL",
+      "QueryBuilder",
+      "parameterized-query"
+    ]
+  },
+  {
+    "rule_name": "避免使用 shell exec 执行不可信输入（防止命令注入）",
+    "language": "PHP",
+    "vulnerability": "Command Injection",
+    "severity": "High",
+    "rationale": "直接将用户输入拼接到系统命令并交给 exec()/system() 等执行，会被注入额外命令。应改用语言内置 API（如 unlink）或经严格验证的安全方法处理文件操作。",
+    "bad_code": "<?php\nuse Symfony\\Component\\HttpFoundation\\Request;\nuse Symfony\\Component\\HttpFoundation\\Response;\nuse Symfony\\Component\\HttpKernel\\Attribute\\AsController;\nuse Symfony\\Component\\Routing\\Annotation\\Route;\n\n#[AsController]\nclass ExampleController \n{\n\n    #[Route('/remove_file', methods: ['POST'])]\n    public function removeFile(Request $request): Response\n    {\n        $filename =  $request->request->get('filename');\n        exec(sprintf('rm %s', $filename));\n\n        // ...\n    }\n}\n?>",
+    "good_code": "<?php\n// 使用 PHP 内置函数或 Symfony Filesystem\nuse Symfony\\Component\\Filesystem\\Filesystem;\n\n$filename = $request->request->get('filename');\n$storagePath = $this->getParameter('kernel.project_dir') . '/storage';\n$filePath = $storagePath . '/' . basename($filename);\n\n// 使用 unlink\nif (file_exists($filePath)) {\n    unlink($filePath);\n}\n\n// 或者使用 Symfony Filesystem\n$filesystem = new Filesystem();\nif ($filesystem->exists($filePath)) {\n    $filesystem->remove($filePath);\n}\n?>",
+    "description": "不要把用户输入传入 exec()/system() 等命令执行函数。对于文件删除等操作应使用 unlink() 或 Symfony Filesystem 的 remove()，并对路径做验证或规范化。关键词：exec、unlink、Filesystem、命令注入。",
+    "tags": [
+      "Command Injection",
+      "PHP",
+      "exec",
+      "unlink",
+      "Symfony Filesystem"
+    ]
+  },
+  {
+    "rule_name": "验证重定向目标或使用白名单（防止开放重定向）",
+    "language": "PHP",
+    "vulnerability": "Open Redirection",
+    "severity": "Medium",
+    "rationale": "直接重定向到用户提供的 URL 可使受害者被导向恶意站点。通过校验目标是否为受信任的路径/域或使用内部路由名可以阻止被利用。",
+    "bad_code": "<?php\nuse Symfony\\Bundle\\FrameworkBundle\\Controller\\AbstractController;\nuse Symfony\\Component\\HttpFoundation\\Request;\nuse Symfony\\Component\\HttpFoundation\\Response;\nuse Symfony\\Component\\HttpKernel\\Attribute\\MapQueryParameter;\nuse Symfony\\Component\\Routing\\Annotation\\Route;\n\nclass ExampleController extends AbstractController \n{\n\n    #[Route('/dynamic_redirect', methods: ['GET'])]\n    public function dynamicRedirect(#[MapQueryParameter] string $url): Response \n    {\n        return $this->redirect($url);\n    }\n}\n?>",
+    "good_code": "<?php\n// 使用白名单或只允许内部路由\n$allowed = [\n    '/account',\n    'https://trusteddomain.example/profile'\n];\n\nif (!in_array($url, $allowed)) {\n    // fallback to safe location\n    return $this->redirectToRoute('homepage');\n}\n\nreturn $this->redirect($url);\n\n// 或者限制为内部路由名：\n// return $this->redirectToRoute('dashboard');",
+    "description": "不要直接将用户输入作为 redirect() 的参数。应对目标 URL 做白名单或仅允许内部路由名，关键字：重定向验证、白名单、redirectToRoute、开放重定向。",
+    "tags": [
+      "Open Redirection",
+      "PHP",
+      "redirect",
+      "whitelist",
+      "重定向"
+    ]
+  },
+  {
+    "rule_name": "服务器端验证上传文件类型与大小（防止上传漏洞）",
+    "language": "PHP (Symfony)",
+    "vulnerability": "File Upload Vulnerabilities",
+    "severity": "High",
+    "rationale": "客户端控制不可被信任，必须在服务器端校验 MIME 类型与大小，结合约束类或验证器拒绝不合规文件，避免执行或暴露敏感数据。",
+    "bad_code": "<?php\n// 不进行任何服务器端校验，直接保存上传文件（示例）\n$uploaded = $_FILES['file'];\nmove_uploaded_file($uploaded['tmp_name'], '/public/uploads/' . $uploaded['name']);\n?>",
+    "good_code": "<?php\n// 使用 Symfony 验证约束（示例来自文档）\nuse Symfony\\Component\\HttpFoundation\\File\\UploadedFile;\nuse Symfony\\Component\\Validator\\Constraints\\File;\n\nclass UploadDto\n{\n    public function __construct(\n        #[File(\n            maxSize: '1024k',\n            mimeTypes: [\n                'application/pdf',\n                'application/x-pdf',\n            ],\n        )]\n        public readonly UploadedFile $file,\n    ){}\n}\n\n// 或在表单中使用 FileType 与约束\nuse Symfony\\Component\\Form\\Extension\\Core\\Type\\FileType;\nuse Symfony\\Component\\Validator\\Constraints\\File as FileConstraint;\n\n$builder->add('file', FileType::class, [\n    'constraints' => [\n        new FileConstraint([\n            'maxSize' => '1024k',\n            'mimeTypes' => ['application/pdf', 'application/x-pdf'],\n        ]),\n    ],\n]);\n?>",
+    "description": "在服务器端使用 Symfony 的 File 验证器约束检查文件大小与 MIME 类型，拒绝不符合规则的上传。关键词：File Constraint、UploadedFile、maxSize、mimeTypes、服务器端验证。",
+    "tags": [
+      "File Upload",
+      "Symfony",
+      "File Constraint",
+      "virus-scan",
+      "mime-type"
+    ]
+  },
+  {
+    "rule_name": "为上传文件生成唯一文件名并安全存储",
+    "language": "PHP",
+    "vulnerability": "File Upload Vulnerabilities",
+    "severity": "Medium",
+    "rationale": "使用原始文件名容易导致覆盖或路径遍历风险，生成唯一名称并把文件存放在非公开目录可以减少被直接访问或覆盖的风险。",
+    "bad_code": "<?php\n// 直接使用原始文件名保存（可能覆盖或包含不合法字符）\nmove_uploaded_file($file->getPathname(), '/public/uploads/' . $file->getClientOriginalName());\n?>",
+    "good_code": "<?php\n// 生成唯一文件名并移动到非公开目录\n$uniqueName = uniqid('', true) . '-' . preg_replace('/[^A-Za-z0-9._-]/', '', $file->getClientOriginalName());\n$destination = $this->getParameter('kernel.project_dir') . '/storage/uploads';\n$file->move($destination, $uniqueName);\n?>",
+    "description": "上传时为文件生成唯一 ID 前缀并清理原始文件名，且将文件保存到非 public 目录，防止覆盖和直接访问。关键词：唯一文件名、uniqid、存放目录、uploads、basename。",
+    "tags": [
+      "File Upload",
+      "unique-filename",
+      "storage",
+      "PHP",
+      "安全存储"
+    ]
+  },
+  {
+    "rule_name": "使用 realpath 或 basename 校验并规范化路径（防止目录遍历）",
+    "language": "PHP",
+    "vulnerability": "Directory Traversal",
+    "severity": "High",
+    "rationale": "通过 realpath 获取绝对路径并确保路径以存储目录为前缀，或使用 basename 去掉目录成分，可防止用户通过../等路径访问到存储目录之外的文件。",
+    "bad_code": "$storagePath = $this->getParameter('kernel.project_dir') . '/storage';\n$filePath = $storagePath . '/' . $filename; // 未校验或规范化，存在 ../ 攻击风险",
+    "good_code": "<?php\n$storagePath = $this->getParameter('kernel.project_dir') . '/storage';\n$filePath = $storagePath . '/' . $filename;\n\n$realBase = realpath($storagePath);\n$realPath = realpath($filePath);\n\nif ($realPath === false || !str_starts_with($realPath, $realBase))\n{\n    // Directory Traversal!\n}\n\n// 或者去掉目录信息\n$filePath = $storagePath . '/' . basename($filename);\n?>",
+    "description": "使用 realpath 获取绝对路径并检查是否以存储目录为前缀，或使用 basename 去除目录部分，阻止 '..' 路径跳出。关键词：realpath、basename、str_starts_with、路径规范化、目录遍历。",
+    "tags": [
+      "Directory Traversal",
+      "realpath",
+      "basename",
+      "PHP",
+      "路径校验"
+    ]
+  },
+  {
+    "rule_name": "为响应设置安全相关头（防止点击劫持与 MIME 混淆等）",
+    "language": "PHP",
+    "vulnerability": "Missing Security Headers",
+    "severity": "Medium",
+    "rationale": "合理的安全头可以降低多种攻击面：HSTS 强制 HTTPS、X-Frame-Options 防止点击劫持、X-Content-Type-Options 防止 MIME 嗅探、CSP 限制可执行资源等。",
+    "bad_code": "<?php\n// 未设置安全头，默认响应不包含安全约束\n$response = new Response();\n// 没有设置 X-Frame-Options, Content-Security-Policy 等",
+    "good_code": "<?php\nuse Symfony\\Component\\HttpFoundation\\Response;\n\n$response = new Response();\n$response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');\n$response->headers->set('X-Frame-Options', 'SAMEORIGIN');\n$response->headers->set('X-Content-Type-Options', 'nosniff');\n$response->headers->set('Content-Security-Policy', \"default-src 'self'\");\n?>",
+    "description": "在应用响应中添加 HSTS、X-Frame-Options、X-Content-Type-Options、CSP 等头部以提高安全性。关键词：HSTS、CSP、X-Frame-Options、nosniff、安全头。",
+    "tags": [
+      "Security Headers",
+      "CSP",
+      "HSTS",
+      "X-Frame-Options",
+      "PHP"
+    ]
+  },
+  {
+    "rule_name": "会话 Cookie 强配置（HttpOnly、Secure、SameSite、短TTL）",
+    "language": "General",
+    "vulnerability": "Session Hijacking / CSRF risk reduction",
+    "severity": "High",
+    "rationale": "设置 HttpOnly 避免 JS 访问 cookie、设置 Secure 确保仅在 HTTPS 发送、SameSite 限制跨站发送、短会话 TTL 可降低被盗用窗口，能显著降低会话劫持风险。",
+    "bad_code": "framework.session 配置未设置或错误设置，示例：cookie_httponly: false 或 cookie_secure: false，允许跨站发送 cookie。",
+    "good_code": "cookie_httponly: true\ncookie_lifetime: 5\ncookie_samesite: lax|strict\ncookie_secure: auto",
+    "description": "在 Symfony 配置中启用 cookie_httponly、适当的 cookie_lifetime、cookie_samesite 以及 cookie_secure 以提升会话安全性。关键词：cookie_httponly、cookie_samesite、cookie_secure、session TTL。",
+    "tags": [
+      "Session",
+      "Cookies",
+      "SameSite",
+      "HttpOnly",
+      "Symfony"
+    ]
+  },
+  {
+    "rule_name": "定期扫描并更新依赖（防止依赖漏洞）",
+    "language": "General",
+    "vulnerability": "Dependency vulnerabilities",
+    "severity": "Medium",
+    "rationale": "第三方库可能含已知漏洞，定期运行依赖扫描器并更新 composer.lock 可以及时发现并修复已知安全问题，降低被利用风险。",
+    "bad_code": "长时间不更新依赖或不检查 composer.lock 中的漏洞，依赖可能包含已知 CVE 且未修复。",
+    "good_code": "运行更新与安全扫描：\n\ncomposer update\n\n使用 Symfony CLI 安全检查：\n\nsymfony check:security",
+    "description": "使用 composer update 和安全检查工具（symfony check:security、local-php-security-checker 等）定期扫描并升级有漏洞的依赖。关键词：composer update、依赖扫描、symfony check:security、CVE。",
+    "tags": [
+      "Dependencies",
+      "Composer",
+      "security-scan",
+      "symfony check:security",
+      "vulnerability-management"
+    ]
+  },
+  {
+    "rule_name": "使用 Secrets 管理敏感配置并保护私钥",
+    "language": "General",
+    "vulnerability": "Sensitive Data Exposure",
+    "severity": "High",
+    "rationale": "将密钥与敏感配置存储在受保护的 secrets 管理系统中并使用加密存储，避免将私钥或秘钥提交到版本库，减少泄露风险。",
+    "bad_code": "在代码库中硬编码 API_KEY 或将私钥提交到版本控制（例如将 private key 文件加入 git）。",
+    "good_code": "生成并使用 secrets：\n\nbin/console secrets:generate-keys\nbin/console secret:set API_KEY\n\n// 使用时像环境变量一样读取，且私钥文件不应提交到仓库",
+    "description": "使用 Symfony secrets 系统生成密钥并将敏感值存为 secret，避免把私钥或敏感配置提交到仓库。关键词：secrets、secret:set、环境变量、私钥保护。",
+    "tags": [
+      "Secrets",
+      "Sensitive Data",
+      "secret:set",
+      "Symfony",
+      "密钥管理"
+    ]
+  },
+  {
+    "rule_name": "细粒度配置 CORS，避免泛域名通配（防止跨域滥用）",
+    "language": "YAML",
+    "vulnerability": "CORS misconfiguration",
+    "severity": "Medium",
+    "rationale": "允许任意来源（'*'）会使跨域请求在浏览器端被允许，从而可能泄露敏感接口。应为受信域或特定路径设置严格来源白名单与允许方法。",
+    "bad_code": "# config/packages/nelmio_cors.yaml\nnelmio_cors:\n    defaults:\n        origin_regex: true\n        allow_origin: ['*']\n        allow_methods: ['GET', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE']\n        allow_headers: ['*']\n        expose_headers: ['Link']\n        max_age: 3600\n    paths:\n        '^/api': ~\n\n# '*' 允许所有来源，可能导致敏感接口被跨域利用",
+    "good_code": "# 推荐只允许特定来源\nnelmio_cors:\n    defaults:\n        origin_regex: false\n        allow_origin: ['https://trusted.example.com']\n        allow_methods: ['GET', 'POST']\n        allow_headers: ['Content-Type', 'Authorization']\n    paths:\n        '^/api': ~",
+    "description": "使用 nelmio/cors-bundle 时应避免 allow_origin: ['*']，为敏感 API 配置受信域白名单与最小化允许方法和头。关键词：CORS、nelmio/cors-bundle、allow_origin、白名单。",
+    "tags": [
+      "CORS",
+      "nelmio",
+      "YAML",
+      "allow_origin",
+      "跨域"
+    ]
+  }
+]
+
+--- 2025-11-27T05:05:22.611065Z | file=Unvalidated_Redirects_and_Forwards_Cheat_Sheet.md | section=Introduction
+[
+  {
+    "rule_name": "未验证的重定向/转发防护：使用白名单或固定目标并校验重定向参数",
+    "language": "General",
+    "vulnerability": "Unvalidated Redirects and Forwards",
+
+--- 2025-11-27T05:26:01.265068Z | file=XSS_Filter_Evasion_Cheat_Sheet.md | section=Tests
+[
+  {
+    "rule_name": "避免直接使用JavaScript URI导致XSS",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "Critical",
+    "rationale": "直接使用javascript:协议的URI可能导致脚本代码执行，引发XSS攻击。禁止或严格校验javascript:的使用可以有效防止XSS。",
+    "bad_code": "<a href=\"javascript:alert('XSS')\">Click Me</a>",
+    "good_code": "<a href=\"https://trusted-domain.com/page\">安全链接</a>",
+    "description": "阻止javascript:协议的超链接可防止注入恶意脚本，避免XSS漏洞。关键点是过滤或编码超链接中的javascript:内容，防止攻击者执行任意JS代码。",
+    "tags": ["XSS","HTML","URI","javascript:","输入过滤"]
+  },
+  {
+    "rule_name": "避免事件处理程序属性注入导致XSS",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "Critical",
+    "rationale": "HTML标签中的事件处理属性（如onmouseover、onerror等）可以用来执行JavaScript代码，攻击者通过注入恶意事件处理程序引发XSS。禁止动态插入未校验事件属性或使用安全API操作DOM可避免该风险。",
+    "bad_code": "<img src=\"#\" onerror=\"alert('XSS')\">",
+    "good_code": "imgElement.addEventListener('error', function() { /* 安全处理逻辑 */ });",
+    "description": "避免在HTML标签中动态拼接或插入事件处理程序属性，防止攻击者注入恶意JS代码。推荐采用标准DOM事件绑定API代替HTML属性注入。",
+    "tags": ["XSS","HTML","事件处理","DOM安全","输入验证"]
+  },
+  {
+    "rule_name": "对URL参数及HTML属性进行HTML属性编码防止XSS",
+    "language": "Java",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "未经编码的用户输入直接嵌入HTML属性内，会导致属性值闭合破坏，从而注入恶意代码。使用针对HTML属性的编码（HtmlAttributeEncode）可以安全注入内容，防止注入攻击。",
+    "bad_code": "<a href=\"/share?content_type=1&title=" + userInput + "\">Share</a>",
+    "good_code": "<a href=\"/share?content_type=1&title=<%=Encode.forHtmlAttribute(untrustedContentTitle)%>\">Share</a>",
+    "description": "对插入至HTML属性中的数据进行HTML属性编码，避免属性值被恶意闭合或破坏，防止XSS注入。此规则特别针对URL参数嵌入，建议使用安全编码库。",
+    "tags": ["XSS","Java","HTML属性编码","输入输出编码","OWASP"]
+  },
+  {
+    "rule_name": "对JavaScript上下文内插入的数据进行JS编码避免XSS",
+    "language": "Java",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "用户输入若未对JavaScript语句中的字符串进行编码，会导致语法结构被破坏，从而注入并执行恶意代码。对JavaScript上下文变量值使用JavaScript编码处理是防止此类XSS的有效措施。",
+    "bad_code": "<script>var title = \"<%=request.getParameter(\"title\")%>\";</script>",
+    "good_code": "<script>var title = \"<%=Encode.forJavaScript(request.getParameter(\"title\"))%>\";</script>",
+    "description": "在动态构造包含用户输入的JavaScript代码时，必须进行JavaScript编码避免字符串闭合导致的脚本注入。该措施有效预防反射型XSS。",
+    "tags": ["XSS","Java","JavaScript编码","反射型XSS","输入验证"]
+  },
+  {
+    "rule_name": "避免HTTP参数污染引发的XSS风险",
+    "language": "General",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "HTTP参数污染攻击通过多次注入同名参数修改应用逻辑，导致安全关键变量被恶意篡改，引发XSS甚至存储型XSS。严密验证所有HTTP请求参数，避免信任用户控制或未编码的参数可防护此类攻击。",
+    "bad_code": "应用直接信任HTTP参数content_type，无有效校验，易被污染导致注入。",
+    "good_code": "对所有HTTP参数做白名单校验和编码，尤其是content_type等关键参数必须严格验证类型和值。",
+    "description": "避免信任或直接使用同名HTTP参数中的恶意值，合理校验和编码所有参数，防止HTTP参数污染导致XSS及其他逻辑漏洞。",
+    "tags": ["XSS","HTTP参数污染","参数验证","安全编码","输入清洗"]
+  },
+  {
+    "rule_name": "禁止未经编码的脚本标签直接插入导致XSS",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "Critical",
+    "rationale": "直接插入<script>标签并加载远程或动态脚本会导致任意JS执行，严重导致全面XSS。推荐移除、过滤或使用严格白名单策略限制script标签的使用。",
+    "bad_code": "<script src=\"http://xss.rocks/xss.js\"></script>",
+    "good_code": "移除或禁用不可信的<script>标签，或使用Content Security Policy (CSP)限制脚本来源",
+    "description": "过滤并禁止不可信来源的<script>标签插入，采用CSP防范远程脚本注入攻击，是防御XSS的最佳实践。",
+    "tags": ["XSS","HTML","脚本标签","CSP","前端安全"]
+  },
+  {
+    "rule_name": "避免HTML标签中的缺失引号导致XSS攻击",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "HTML标签中属性值缺少引号时，浏览器可能自动补齐或解析不符合预期，攻击者利用此特性注入事件处理程序或恶意脚本，导致XSS攻击。强制为所有属性添加引号可避免该问题。",
+    "bad_code": "<a onmouseover=alert(document.cookie)>XSS link</a>",
+    "good_code": "<a onmouseover=\"alert(document.cookie)\">XSS link</a>",
+    "description": "严格为HTML属性添加匹配引号，防止浏览器自动补齐和解析错误带来的事件代码注入风险，降低XSS攻击面。",
+    "tags": ["XSS","HTML","属性引号","浏览器解析","输入验证"]
+  },
+  {
+    "rule_name": "禁止在HTML标签中使用无法信任的表达式和CSS表达式",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "CSS表达式（如expression()）可以执行JavaScript导致XSS，且IE等浏览器支持该语法。防止在样式或属性中插入表达式是防止XSS的重要手段。",
+    "bad_code": "<img style=\"xss:expression(alert('XSS'))\">",
+    "good_code": "移除或过滤掉样式中的expression表达式，使用安全的CSS属性值",
+    "description": "阻止在样式属性中动态注入expression表达式，避免浏览器借助CSS执行恶意代码，提升前端安全防范。",
+    "tags": ["XSS","CSS","HTML","expression","IE漏洞"]
+  },
+  {
+    "rule_name": "避免在HTML属性中使用behavior和htc文件导致XSS",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "Medium",
+    "rationale": ".htc行为文件绑定可能运行脚本，攻击者通过插入behavior:url(xss.htc)执行恶意代码。禁用或过滤behavior相关属性可避免该攻击向量。",
+    "bad_code": "<xss style=\"behavior: url(xss.htc);\">",
+    "good_code": "禁止用户输入中出现behavior属性，严格过滤或校验样式字符串",
+    "description": "禁止不受信任来源的htc行为文件绑定，防止通过IE行为机制触发XSS攻击。",
+    "tags": ["XSS","HTML","行为文件","htc","IE漏洞"]
+  },
+  {
+    "rule_name": "避免通过多种编码绕过XSS过滤—正确使用HTML字符实体编码",
+    "language": "General",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "攻击者利用十进制、十六进制、无分号编码等多种HTML字符实体编码绕过过滤器，注入XSS。统一且严格的输出编码规范可防止绕过。",
+    "bad_code": "<a href=\"&#0000106&#0000097&#0000118&#0000097&#...\">Click Me</a>",
+    "good_code": "使用可靠的建库输出编码方法对所有输出做标准HTML编码",
+    "description": "对所有HTML输出统一施加严格的编码策略，防止攻击者利用多种编码形式绕过XSS防护。",
+    "tags": ["XSS","编码绕过","HTML编码","字符实体","Web安全"]
+  },
+  {
+    "rule_name": "避免动态拼接未转义的脚本字符串导致XSS",
+    "language": "JavaScript",
+    "vulnerability": "XSS",
+    "severity": "Critical",
+    "rationale": "动态拼接用户输入到JavaScript字符串中会破坏语法结构，导致恶意代码执行。应使用安全的JavaScript编码或构造方法防止注入。",
+    "bad_code": "var a=\"<%= untrustedInput %>\";",
+    "good_code": "var a=\"<%= Encode.forJavaScript(untrustedInput) %>\";",
+    "description": "动态生成JavaScript代码时，必须对用户数据进行代码上下文编码，以防止XSS攻击。",
+    "tags": ["XSS","JavaScript","字符串编码","代码注入","上下文编码"]
+  },
+  {
+    "rule_name": "避免不可信任的URL注入导致XSS—全面过滤和校验URL",
+    "language": "General",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "攻击者通过多种编码格式和协议混合，注入含有javascript:、vbscript:、data:等的URL导致脚本执行。严格过滤URL协议及编码方式，确保仅允许安全URL可降低风险。",
+    "bad_code": "<a href=\"javascript:alert('XSS')\">XSS</a>",
+    "good_code": "<a href=\"https://trustedsite.com/page\">安全链接</a>",
+    "description": "对所有用户提供或拼接的URL进行协议限制、编码统一校验，禁止危险协议和混淆形式，防范基于URL的XSS向量。",
+    "tags": ["XSS","URL过滤","协议白名单","编码校验","浏览器安全"]
+  },
+  {
+    "rule_name": "在使用脚本标签加载远程JS文件时谨慎避免被绕过的过滤",
+    "language": "HTML",
+    "vulnerability": "XSS",
+    "severity": "High",
+    "rationale": "攻击者通过语法变形（省略引号、特殊字符、额外属性）绕过正则或过滤器，注入恶意远程脚本。使用复杂的状态机或上下文解析防止绕过。",
+    "bad_code": "<SCRIPT SRC=http://xss.rocks/xss.js?a=> </SCRIPT>",
+    "good_code": "限定script标签属性和格式，使用内容安全策略CSP限制脚本来源",
+    "description": "过滤对script标签src属性的绕过变形，防止绕过机制导致恶意外部脚本注入，提升XSS防御能力。",
+    "tags": ["XSS","脚本加载","过滤绕过","状态机","CSP"]
+  }
+]

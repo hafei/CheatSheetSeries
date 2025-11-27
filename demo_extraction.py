@@ -177,7 +177,7 @@ def main():
     demo_output_format()
     
     # 演示3: 实际提取（需要API Key）
-    # demo_extraction_single_file()
+    demo_extraction_single_file()
     
     print("\n" + "=" * 60)
     print("✅ 演示完成!")

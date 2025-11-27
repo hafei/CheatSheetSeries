@@ -3,24 +3,25 @@ OWASP 安全规则提取流水线
 
 主流水线模块，整合分片、LLM调用和结果处理
 """
-import os
 import json
 import asyncio
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Generator
-from dataclasses import dataclass, asdict
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass
 import re
 
-from .chunker import MarkdownChunker, MarkdownSection, get_code_language_display
+from .chunker import MarkdownChunker, MarkdownSection
 from .prompts import (
     get_system_prompt, 
     get_extraction_prompt, 
     detect_vulnerability_type,
     validate_rule
 )
-from .llm_client import create_llm_client, BaseLLMClient, LLMResponse
+from .llm_client import create_llm_client
+from .config_loader import load_config, ConfigError
+from .models import PipelineConfig
 
 
 # 配置日志
@@ -110,6 +111,25 @@ class OWASPExtractionPipeline:
         # 信号量控制并发
         self._semaphore: Optional[asyncio.Semaphore] = None
     
+    @classmethod
+    def from_config(cls, cfg: PipelineConfig) -> "OWASPExtractionPipeline":
+        """Construct pipeline from a PipelineConfig instance."""
+        return cls(
+            llm_provider=cfg.llm_provider,
+            llm_model=cfg.llm_model,
+            llm_api_key=cfg.llm_api_key,
+            llm_base_url=cfg.llm_base_url,
+            llm_temperature=cfg.llm_temperature,
+            llm_max_tokens=cfg.llm_max_tokens,
+            chunk_min_length=cfg.chunk_min_length,
+            chunk_max_length=cfg.chunk_max_length,
+            include_code_required=cfg.include_code_blocks,
+            max_concurrent=cfg.max_concurrent,
+            retry_count=cfg.retry_count,
+            retry_delay=cfg.retry_delay,
+            output_dir=cfg.output_dir,
+        )
+
     def scan_files(self, input_dir: Path, pattern: str = "*.md") -> List[Path]:
         """扫描目录下的Markdown文件"""
         files = list(input_dir.glob(pattern))
@@ -138,13 +158,22 @@ class OWASPExtractionPipeline:
             section.content
         )
         
+        # 如果分片内容过大，截断首尾以避免模型输出被截断为空
+        MAX_PROMPT_CONTENT = 80000
+        content_to_use = section.content
+        if len(section.content) > MAX_PROMPT_CONTENT:
+            head = section.content[:1500]
+            tail = section.content[-1500:]
+            content_to_use = head + "\n\n... （中间被截断，为了确保模型能返回完整JSON而省略） ...\n\n" + tail
+            logger.info(f"分片内容过长，已截断 file={section.file_name} section={section.section_title}")
+
         # 构建prompt
         prompt = get_extraction_prompt(
             file_name=section.file_name,
             doc_title=section.title,
             section_title=section.section_title,
             parent_sections=section.parent_sections,
-            content=section.content,
+            content=content_to_use,
             vuln_hint=vuln_hint
         )
         
@@ -162,9 +191,27 @@ class OWASPExtractionPipeline:
                 
                 # 更新token统计
                 self.stats.total_tokens += response.usage.get("total_tokens", 0)
-                
-                # 解析JSON响应
-                rules = self._parse_json_response(response.content)
+                # 如果返回内容为空，记录并将 raw_response 写入 debug 文件，然后触发重试
+                if not (response.content and response.content.strip()):
+                    try:
+                        log_dir = self.output_dir if hasattr(self, 'output_dir') else Path('./output')
+                        log_dir.mkdir(parents=True, exist_ok=True)
+                        debug_file = log_dir / 'llm_raw_response_debug.jsonl'
+                        debug_obj = {
+                            'timestamp': datetime.utcnow().isoformat() + 'Z',
+                            'source_file': section.file_name,
+                            'section': section.section_title,
+                            'raw_response': getattr(response, 'raw_response', None)
+                        }
+                        with open(debug_file, 'a', encoding='utf-8') as df:
+                            df.write(json.dumps(debug_obj, ensure_ascii=False) + '\n')
+                    except Exception:
+                        pass
+
+                    raise ValueError('Empty LLM response content')
+
+                # 解析JSON响应（并记录原始响应以便调试）
+                rules = self._parse_json_response(response.content, section, raw_response=getattr(response, 'raw_response', None))
                 
                 # 为每个规则添加来源信息
                 for rule in rules:
@@ -188,7 +235,7 @@ class OWASPExtractionPipeline:
         self.stats.failed_chunks += 1
         return []
     
-    def _parse_json_response(self, content: str) -> List[Dict[str, Any]]:
+    def _parse_json_response(self, content: str, section: Optional[MarkdownSection] = None, raw_response: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """解析LLM返回的JSON"""
         # 清理响应内容
         content = content.strip()
@@ -216,17 +263,81 @@ class OWASPExtractionPipeline:
                 return [result]
             return []
         except json.JSONDecodeError as e:
-            # 尝试修复常见JSON问题
+            # 将原始响应追加到调试日志，包含来源信息
             try:
-                # 尝试提取JSON数组
-                match = re.search(r'\[[\s\S]*\]', content)
-                if match:
-                    return json.loads(match.group())
-            except:
+                log_dir = self.output_dir if hasattr(self, 'output_dir') else Path('./output')
+                log_dir.mkdir(parents=True, exist_ok=True)
+                # 原始文本日志（人类可读）
+                log_file = log_dir / 'llm_raw_responses.log'
+                with open(log_file, 'a', encoding='utf-8') as lf:
+                    header = f"\n--- {datetime.utcnow().isoformat()}Z"
+                    if section:
+                        header += f" | file={section.file_name} | section={section.section_title}"
+                    lf.write(header + '\n')
+                    lf.write(content + '\n')
+
+                # 结构化原始响应（JSONL），如果上层提供了 raw_response，则写入以便后续分析
+                if raw_response is not None:
+                    debug_file = log_dir / 'llm_raw_response_debug.jsonl'
+                    # 保存到 jsonl，每行一个对象，添加元信息
+                    debug_obj = {
+                        'timestamp': datetime.utcnow().isoformat() + 'Z',
+                        'source_file': section.file_name if section else None,
+                        'section': section.section_title if section else None,
+                        'raw_response': raw_response
+                    }
+                    with open(debug_file, 'a', encoding='utf-8') as df:
+                        df.write(json.dumps(debug_obj, ensure_ascii=False) + '\n')
+            except Exception:
                 pass
-            
+
+            # 如果 response 的 raw_response 有结构信息，也将其存为 jsonl 以便分析（避免覆盖）
+            try:
+                # raw_response 可在上层 llm_client 中通过 response.raw_response 传入
+                # 但此处只有 content 字符串可用——尝试从调用栈中寻找 raw_response 不现实
+                # 因此，上层在调用 _parse_json_response 时应传入原始 LLMResponse 对象或字典
+                # 作为补充，这里仅写入 content 已记录。如果上层传入了额外属性，可另行记录。
+                pass
+            except Exception:
+                pass
+
+            # 尝试修复常见JSON问题的多种策略
+            # 1) 提取最像JSON的数组或对象
+            try:
+                match = re.search(r'\[.*\]', content, flags=re.S)
+                if match:
+                    candidate = match.group()
+                    # 移除尾随逗号
+                    candidate = re.sub(r',\s*\]', ']', candidate)
+                    return json.loads(candidate)
+            except Exception:
+                pass
+
+            try:
+                match = re.search(r'\{.*\}', content, flags=re.S)
+                if match:
+                    candidate = match.group()
+                    candidate = re.sub(r',\s*\}', '}', candidate)
+                    # 将单引号替换为双引号（谨慎）
+                    candidate2 = candidate.replace("'", '"')
+                    try:
+                        return json.loads(candidate2)
+                    except Exception:
+                        return json.loads(candidate)
+            except Exception:
+                pass
+
+            # 2) 替换常见的错误（尾随逗号、单引号）并重试
+            try:
+                s = content
+                s = re.sub(r',\s*([\]}])', r'\1', s)
+                s = s.replace("'", '"')
+                return json.loads(s)
+            except Exception:
+                pass
+
             logger.error(f"JSON解析失败: {e}")
-            logger.debug(f"原始内容: {content[:500]}...")
+            logger.debug(f"原始内容前500字: {content[:500]}...")
             return []
     
     async def process_file(self, file_path: Path) -> List[Dict[str, Any]]:
@@ -295,9 +406,9 @@ class OWASPExtractionPipeline:
             try:
                 rules = await self.process_file(file_path)
                 all_rules.extend(rules)
-                
-                # 中间保存（防止中断丢失）
-                if output_file and len(all_rules) % 50 == 0:
+
+                # 中间保存（防止中断丢失）: 每处理完一个文件就保存一次
+                if output_file:
                     self._save_intermediate(all_rules, output_file)
                     
             except Exception as e:
@@ -387,13 +498,26 @@ def run_extraction(
     Returns:
         提取的规则列表
     """
-    pipeline = OWASPExtractionPipeline(
-        llm_provider=provider,
-        llm_model=model,
-        llm_api_key=api_key,
-        llm_base_url=base_url,
-        max_concurrent=max_concurrent,
-        **kwargs
-    )
-    
+    # If a config path is provided in kwargs or via env, prefer that configuration
+    config_path = kwargs.pop("config_path", None)
+    cfg_obj = None
+    if config_path:
+        try:
+            cfg_obj = load_config(config_path)
+        except ConfigError as e:
+            logger.error(f"配置加载失败: {e}")
+            raise
+
+    if cfg_obj is not None:
+        pipeline = OWASPExtractionPipeline.from_config(cfg_obj)
+    else:
+        pipeline = OWASPExtractionPipeline(
+            llm_provider=provider,
+            llm_model=model,
+            llm_api_key=api_key,
+            llm_base_url=base_url,
+            max_concurrent=max_concurrent,
+            **kwargs
+        )
+
     return pipeline.run_sync(input_dir, output_file)

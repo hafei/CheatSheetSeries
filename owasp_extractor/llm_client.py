@@ -12,6 +12,7 @@ LLM 客户端封装
 import os
 import json
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, AsyncGenerator
 from dataclasses import dataclass
@@ -90,11 +91,10 @@ class OpenAICompatibleClient(BaseLLMClient):
         # 从环境变量获取API Key
         if not self.api_key:
             self.api_key = os.environ.get("OPENAI_API_KEY", "")
-        
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        # 仅在存在API Key时设置授权头，避免出现空的 'Bearer ' 值
+        self.headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            self.headers["Authorization"] = f"Bearer {self.api_key}"
     
     async def chat(
         self,
@@ -115,6 +115,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         if kwargs.get("json_mode", False):
             payload["response_format"] = {"type": "json_object"}
         
+        logger = logging.getLogger(__name__)
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 url,
@@ -122,14 +123,70 @@ class OpenAICompatibleClient(BaseLLMClient):
                 json=payload
             )
             response.raise_for_status()
-            data = response.json()
-        
+            text = response.text
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.warning(f"LLM returned non-JSON response or empty body: {e}")
+                logger.debug(f"LLM raw response text: {text[:1000]}")
+                return LLMResponse(
+                    content=text or "",
+                    model=self.model,
+                    usage={},
+                    finish_reason="unknown",
+                    raw_response=None
+                )
+
+            # 尝试从多种响应结构中提取文本内容，兼容不同服务商
+            content = ""
+            finish_reason = "unknown"
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+
+            try:
+                # OpenAI-like
+                content = data["choices"][0]["message"]["content"]
+                finish_reason = data["choices"][0].get("finish_reason", "stop")
+            except Exception:
+                # Ollama-like
+                try:
+                    content = data.get("message", {}).get("content", "")
+                    finish_reason = data.get("done_reason", "stop")
+                except Exception:
+                    # Anthropic-like or other shapes
+                    if isinstance(data, dict):
+                        # Look for common string fields
+                        for key in ("text", "result", "content", "message"):
+                            v = data.get(key)
+                            if isinstance(v, str) and v.strip():
+                                content = v
+                                break
+                        # As a last resort, serialize the whole object
+                        if not content:
+                            try:
+                                content = json.dumps(data, ensure_ascii=False)
+                            except Exception:
+                                content = str(data)
+                    else:
+                        content = str(data)
+
+        # Attach raw HTTP metadata for debugging
+        raw_meta = None
+        try:
+            raw_meta = {
+                'status_code': response.status_code,
+                'url': url,
+                'headers': dict(response.headers),
+                'text': text
+            }
+        except Exception:
+            raw_meta = {'text': text}
+
         return LLMResponse(
-            content=data["choices"][0]["message"]["content"],
-            model=data.get("model", self.model),
-            usage=data.get("usage", {}),
-            finish_reason=data["choices"][0].get("finish_reason", "stop"),
-            raw_response=data
+            content=content,
+            model=data.get("model", self.model) if isinstance(data, dict) else self.model,
+            usage=usage,
+            finish_reason=finish_reason,
+            raw_response=data if isinstance(data, dict) else raw_meta
         )
     
     def chat_sync(
@@ -150,6 +207,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         if kwargs.get("json_mode", False):
             payload["response_format"] = {"type": "json_object"}
         
+        logger = logging.getLogger(__name__)
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(
                 url,
@@ -157,14 +215,65 @@ class OpenAICompatibleClient(BaseLLMClient):
                 json=payload
             )
             response.raise_for_status()
-            data = response.json()
-        
+            text = response.text
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.warning(f"LLM returned non-JSON response or empty body: {e}")
+                logger.debug(f"LLM raw response text: {text[:1000]}")
+                return LLMResponse(
+                    content=text or "",
+                    model=self.model,
+                    usage={},
+                    finish_reason="unknown",
+                    raw_response=None
+                )
+
+            # Defensive content extraction (sync path)
+            content = ""
+            finish_reason = "unknown"
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+
+            try:
+                content = data["choices"][0]["message"]["content"]
+                finish_reason = data["choices"][0].get("finish_reason", "stop")
+            except Exception:
+                try:
+                    content = data.get("message", {}).get("content", "")
+                    finish_reason = data.get("done_reason", "stop")
+                except Exception:
+                    if isinstance(data, dict):
+                        for key in ("text", "result", "content", "message"):
+                            v = data.get(key)
+                            if isinstance(v, str) and v.strip():
+                                content = v
+                                break
+                        if not content:
+                            try:
+                                content = json.dumps(data, ensure_ascii=False)
+                            except Exception:
+                                content = str(data)
+                    else:
+                        content = str(data)
+
+        # Attach raw HTTP metadata for debugging (sync path)
+        raw_meta = None
+        try:
+            raw_meta = {
+                'status_code': response.status_code,
+                'url': url,
+                'headers': dict(response.headers),
+                'text': text
+            }
+        except Exception:
+            raw_meta = {'text': text}
+
         return LLMResponse(
-            content=data["choices"][0]["message"]["content"],
-            model=data.get("model", self.model),
-            usage=data.get("usage", {}),
-            finish_reason=data["choices"][0].get("finish_reason", "stop"),
-            raw_response=data
+            content=content,
+            model=data.get("model", self.model) if isinstance(data, dict) else self.model,
+            usage=usage,
+            finish_reason=finish_reason,
+            raw_response=data if isinstance(data, dict) else raw_meta
         )
 
 
@@ -187,12 +296,10 @@ class AnthropicClient(BaseLLMClient):
         
         if not self.api_key:
             self.api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        
-        self.headers = {
-            "x-api-key": self.api_key,
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01"
-        }
+        # 仅在存在API Key时设置x-api-key，避免空值导致的请求错误
+        self.headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        if self.api_key:
+            self.headers["x-api-key"] = self.api_key
     
     async def chat(
         self,
